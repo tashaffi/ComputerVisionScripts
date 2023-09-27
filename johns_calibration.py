@@ -21,6 +21,7 @@ import dataset_functions as df
 
 import numpy as np
 
+
 def create_dissipating_circle_kernel(radius, sigma):
     """
     Creates a 2D Gaussian kernel with a dissipating circle shape.
@@ -46,22 +47,23 @@ def create_dissipating_circle_kernel(radius, sigma):
 
     return kernel
 
-def otsu(roi,classes):
-    #Mask 0s to be empty cells to allow better otsu thresholding without 0 being a class
-    while(classes>0):  
+
+def otsu(roi, classes):
+    # Mask 0s to be empty cells to allow better otsu thresholding without 0 being a class
+    while(classes > 0):
         try:
-            thresholds = filters.threshold_multiotsu(roi,classes)
+            thresholds = filters.threshold_multiotsu(roi, classes)
             break
         except:
             classes = classes-1
-        
+
     otsu = np.digitize(roi, bins=thresholds)
     return otsu, thresholds
 
 
 def get_thermal(directory, file):
     thermal_file = os.path.join(directory, file)
-    thermal_data =  np.load(thermal_file)
+    thermal_data = np.load(thermal_file)
     # thermal_time = thermal_data['time']
     return thermal_data
 
@@ -72,7 +74,8 @@ files = []
 summer_data = 'Documents/finalDataRepositorySummer2022'
 # get my home directory and join summer_data with it
 data_dir = os.path.join(os.path.expanduser('~'), summer_data)
-non_calibrated_files = list(np.load(os.path.join(data_dir, 'completedCalibration.npy')))
+non_calibrated_files = list(
+    np.load(os.path.join(data_dir, 'completedCalibration.npy')))
 non_calibrated_files = ['JohnCalibration.npy']
 
 
@@ -85,6 +88,34 @@ kernel = create_dissipating_circle_kernel(radius, sigma)
 print(kernel)
 
 
+# Perform Connected Component Analysis
+def connected_component_analysis(binary_image):
+    num_labels, labels, stats, centroids = cv.connectedComponentsWithStats(
+        binary_image, connectivity=8)
+
+    # num_labels: Total number of connected components (including background)
+    # labels: Label image where each pixel is assigned a label (0 for background)
+    # stats: Statistics for each connected component (e.g., left, top, width, height)
+    # centroids: Centroid coordinates (x, y) for each connected component
+
+    # Create an output image to visualize the labeled components
+    output_image = np.zeros_like(binary_image)
+
+    # Loop through connected components (excluding background)
+    for label in range(1, num_labels):
+        # Extract statistics for the current component
+        left, top, width, height, area = stats[label]
+
+    # Draw a bounding box around the component on the output image
+        cv.rectangle(output_image, (left, top),
+                     (left + width, top + height), (255, 255, 255), 2)
+
+    # Display or save the output image with bounding boxes
+    cv.imshow('Connected Components', cv.resize(
+        output_image.astype('uint8'), (320, 320)))
+    cv.waitKey(2000)
+
+
 prev_frame = []
 diffs = []
 skip = 0
@@ -92,33 +123,33 @@ for file in non_calibrated_files:
     file_dir = os.path.join(data_dir, file)
     print("file _----------------------------")
     print(file_dir)
-    
+
     thermal = None
     thermal = get_thermal(data_dir, file)
-    
+
     thermal = np.array(df.resample_data(thermal))
     print(thermal.shape)
 
-    if thermal is not None: 
+    if thermal is not None:
         for frame in thermal:
             key = cv.waitKey(1000)
             print(frame.shape)
-            cv.imshow("Thermal Original", cv.resize(frame.astype('uint8'), (320,320)))
-        
+            cv.imshow("Thermal Original", cv.resize(
+                frame.astype('uint8'), (320, 320)))
 
             detection = np.copy(frame)
-            detection[frame<50] = 0
+            detection[frame < 50] = 0
             # Apply adaptive thresholding
             # detection = cv.cvtColor(detection, cv.COLOR_BGR2GRAY)
             print(detection.shape)
-            
+
             # Apply convolution with the dissipating circle kernel
             result = cv.filter2D(detection, -1, kernel)
 
             # Define a threshold to identify potential burners
             threshold = 10000  # Adjust as needed
             # Find the minimum value in the result image
-            
+
             '''
             Perform convolution using the dissipating heatmap (which mimics a burner)
             then normalize
@@ -129,44 +160,48 @@ for file in non_calibrated_files:
             '''
             min_value = abs(np.min(result))
             max_value = abs(np.max(result))
-            
+
             # Normalize the result image by dividing by the minimum value
             result = (result - min_value) / (max_value - min_value)
-            result[result<.4] = 0
+            result[result < .4] = 0
             result = cv.filter2D(result, -1, kernel)
-            
-            
+
             min_value = abs(np.min(result))
             max_value = abs(np.max(result))
             result = (result - min_value) / (max_value - min_value)
-            
-            result[result<.4] = 0
+
+            result[result < .4] = 0
             result = cv.filter2D(result, -1, kernel)
             min_value = abs(np.min(result))
             max_value = abs(np.max(result))
             result = (result - min_value) / (max_value - min_value)
-            
+
             # Apply the mask to the original image
             frame = np.multiply(result, 255)
-            cv.imshow("Normalized Result", cv.resize(frame.astype('uint8'), (320,320)))   
-            
-            # Find locations where the result exceeds the threshold
-            #burner_candidates = np.where(result > threshold)
-            contours, _ = cv.findContours(frame.astype(np.uint8), cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
-            
+            frame[frame < 50] = 0
+            cv.imshow("Normalized Result", cv.resize(
+                frame.astype('uint8'), (320, 320)))
+
+            # connected_component_analysis(frame.astype(np.uint8))
+
+            contours, _ = cv.findContours(frame.astype(
+                np.uint8), cv.RETR_EXTERNAL, cv.CHAIN_APPROX_NONE)
+
             for _, c in enumerate(contours):
                 # Place a bounding box around the contour
-                x,y,w,h = cv.boundingRect(c)
+                x, y, w, h = cv.boundingRect(c)
                 print(x, y, w, h)
 
                 # Check if the bounding box is an appropriate size for a burner
                 # if w>=3 and h>=3 and w<=12 and h<=12:
-                cv.rectangle(frame,(x,y),(x+w,y+h),(128,128, 55),1)
+                cv.rectangle(frame, (x, y), (x+w, y+h), (128, 128, 55), 1)
                 # coords.append([x,y,w,h])
 
-            cv.imshow("Detection", cv.resize(frame.astype('uint8'), (320,320)))
-            
-            if key==27: break
+            cv.imshow("Detection", cv.resize(
+                frame.astype('uint8'), (320, 320)))
+
+            if key == 27:
+                break
 
 
 cv.destroyAllWindows()
